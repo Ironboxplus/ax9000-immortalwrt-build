@@ -27,6 +27,18 @@ for p in patches/target/*.patch; do
 	git -C source apply --verbose "$repo_dir/$p"
 done
 cp patches/mac80211/nss/ath11k/*.patch source/package/kernel/mac80211/patches/nss/ath11k/
+# libffi moved from the packages feed into core on 2026-10-19; a source tree
+# older than that combined with the current feed has it nowhere. Take the core
+# recipe from ImmortalWrt until the source tree carries its own.
+libffi_repo=https://github.com/immortalwrt/immortalwrt.git
+libffi_commit=1c2d58530e7dc037db5d1db781de6bf259c90a95
+if [ ! -e source/package/libs/libffi ]; then
+	git init -q libffi-src
+	git -C libffi-src fetch -q --depth=1 "$libffi_repo" "$libffi_commit"
+	git -C libffi-src archive FETCH_HEAD package/libs/libffi | tar -x -C source
+	rm -rf libffi-src
+	echo "$libffi_repo $libffi_commit" > artifacts/libffi-backfill.txt
+fi
 cd source
 ./scripts/feeds update -a 2>&1 | tee "$repo_dir/artifacts/feeds-update.log"
 ./scripts/feeds install -a 2>&1 | tee "$repo_dir/artifacts/feeds-install.log"
