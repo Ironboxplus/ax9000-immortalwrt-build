@@ -1,0 +1,108 @@
+From: AX9000 build <ax9000@localhost>
+Subject: [PATCH] ath11k: nss: keep the right peer when a station changes band
+
+Ported from the fix for the same code on IPQ6018 (arthur-immortalwrt-build),
+to VIKINGYFY/immortalwrt main (backports 7.2). Here __ath11k_peer_delete()
+already ignores the NSS delete result, so the firmware peer is deleted
+either way; what remains:
+
+1. ath11k_peer_create() treats an existing peer with the same address on
+   another vdev as a band transition and removed it from both the addr and
+   the id rhash. The NSS reply to that peer's delete is matched by
+   ath11k_nss_peer_mem_free() through the id rhash, so it was dropped:
+   ath11k_nss_peer_delete() waited the full 5 s under conf_mutex (no
+   management TX on the radio meanwhile) and the peer's NSS memory leaked.
+   Only drop the addr entry; peer ids are unique. Also fall back to the
+   peer list and always warn when an NSS reply matches no peer.
+
+2. __ath11k_peer_delete() looked the peer up by address only, which during
+   a band transition returns the new peer on the other vdev: it was marked
+   delete_in_progress and lost its rhash and self AST entries while the
+   station stayed associated on it. Look up the peer of the requested vdev.
+
+diff --git a/drivers/net/wireless/ath/ath11k/nss.c b/drivers/net/wireless/ath/ath11k/nss.c
+index 7630171..086ef1a 100644
+--- a/drivers/net/wireless/ath/ath11k/nss.c
++++ b/drivers/net/wireless/ath/ath11k/nss.c
+@@ -304,11 +304,13 @@ static void ath11k_nss_peer_mem_free(struct ath11k_base *ab, u32 peer_id)
+ 	spin_lock_bh(&ab->base_lock);
+ 
+ 	peer = ath11k_peer_find_by_id(ab, peer_id);
++	if (!peer)
++		peer = ath11k_peer_find_list_by_id(ab, peer_id);
+ 	if (!peer) {
+ 		spin_unlock_bh(&ab->base_lock);
+-		if(ab->nss.debug_mode)
+-			ath11k_warn(ab, "ath11k_nss: unable to free peer mem, peer_id:%d\n",
+-					peer_id);
++		/* The waiter in ath11k_nss_peer_delete() will time out. */
++		ath11k_warn(ab, "ath11k_nss: unable to free peer mem, peer_id:%d\n",
++			    peer_id);
+ 		return;
+ 	}
+ 
+diff --git a/drivers/net/wireless/ath/ath11k/peer.c b/drivers/net/wireless/ath/ath11k/peer.c
+index 11fb601..53db477 100644
+--- a/drivers/net/wireless/ath/ath11k/peer.c
++++ b/drivers/net/wireless/ath/ath11k/peer.c
+@@ -9,8 +9,8 @@
+ #include "debug.h"
+ #include "nss.h"
+ 
+-static struct ath11k_peer *ath11k_peer_find_list_by_id(struct ath11k_base *ab,
+-						       int peer_id)
++struct ath11k_peer *ath11k_peer_find_list_by_id(struct ath11k_base *ab,
++						int peer_id)
+ {
+ 	struct ath11k_peer *peer;
+ 
+@@ -803,14 +803,12 @@ static int __ath11k_peer_delete(struct ath11k *ar, u32 vdev_id, const u8 *addr)
+ 	mutex_lock(&ab->tbl_mtx_lock);
+ 	spin_lock_bh(&ab->base_lock);
+ 
+-	peer = ath11k_peer_find_by_addr(ab, addr);
+-
+-	/* Fallback to peer list search if the correct peer can't be found.
+-	 * Skip the deletion of the peer from the rhash since it has already
+-	 * been deleted in peer add.
++	/* While a station moves between bands there are two peers with this
++	 * address and the addr rhash points at the one on the other vdev.
++	 * Look up the peer of this vdev so the other one keeps its rhash
++	 * and AST entries; removing an entry not in a rhash is a no-op.
+ 	 */
+-	if (!peer)
+-		peer = ath11k_peer_find(ab, vdev_id, addr);
++	peer = ath11k_peer_find(ab, vdev_id, addr);
+ 
+ 	if (!peer) {
+ 		spin_unlock_bh(&ab->base_lock);
+@@ -914,9 +912,14 @@ int ath11k_peer_create(struct ath11k *ar, struct ath11k_vif *arvif,
+ 		}
+ 
+ 		/* Assume sta is transitioning to another band.
+-		 * Remove here the peer from rhash.
++		 * Remove here the peer from the addr rhash only. Peer ids
++		 * stay unique, and NSS replies to the old peer's delete are
++		 * matched through the id rhash.
+ 		 */
+-		ath11k_peer_rhash_delete(ar->ab, peer);
++		if (ar->ab->rhead_peer_addr)
++			ath11k_peer_rhash_remove(ar->ab, ar->ab->rhead_peer_addr,
++						 &peer->rhash_addr,
++						 &ar->ab->rhash_peer_addr_param);
+ 	}
+ 	spin_unlock_bh(&ar->ab->base_lock);
+ 	mutex_unlock(&ar->ab->tbl_mtx_lock);
+diff --git a/drivers/net/wireless/ath/ath11k/peer.h b/drivers/net/wireless/ath/ath11k/peer.h
+index 7b2795d..67da95f 100644
+--- a/drivers/net/wireless/ath/ath11k/peer.h
++++ b/drivers/net/wireless/ath/ath11k/peer.h
+@@ -110,6 +110,8 @@ struct ath11k_peer *ath11k_peer_find(struct ath11k_base *ab, int vdev_id,
+ struct ath11k_peer *ath11k_peer_find_by_addr(struct ath11k_base *ab,
+ 					     const u8 *addr);
+ struct ath11k_peer *ath11k_peer_find_by_id(struct ath11k_base *ab, int peer_id);
++struct ath11k_peer *ath11k_peer_find_list_by_id(struct ath11k_base *ab,
++						int peer_id);
+ struct ath11k_peer *ath11k_peer_find_by_ast(struct ath11k_base *ab, int ast_hash);
+ void ath11k_peer_cleanup(struct ath11k *ar, u32 vdev_id);
+ int ath11k_peer_delete(struct ath11k *ar, u32 vdev_id, u8 *addr);

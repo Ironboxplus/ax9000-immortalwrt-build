@@ -1,0 +1,18 @@
+diff --git a/target/linux/qualcommax/image/ipq807x.mk b/target/linux/qualcommax/image/ipq807x.mk
+index 5fce281a58..b9885e54d8 100644
+--- a/target/linux/qualcommax/image/ipq807x.mk
++++ b/target/linux/qualcommax/image/ipq807x.mk
+@@ -610,7 +610,12 @@ define Device/xiaomi_ax9000-stock
+ 	DEVICE_ALT0_MODEL := AX9000
+ 	DEVICE_ALT0_VARIANT := (custom U-Boot layout)
+ 	KERNEL_SIZE :=
+-	ARTIFACTS :=
++ifeq ($(IB),)
++ifneq ($(CONFIG_TARGET_ROOTFS_INITRAMFS),)
++	ARTIFACTS := initramfs-factory.ubi
++	ARTIFACT/initramfs-factory.ubi := append-image-stage initramfs-uImage.itb | ubinize-kernel
++endif
++endif
+ endef
+ TARGET_DEVICES += xiaomi_ax9000-stock
+ 

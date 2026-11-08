@@ -1,8 +1,0 @@
-{
-  "repository": "https://github.com/qosmio/openwrt-ipq.git",
-  "branch": "25.12-nss",
-  "commit": "d6848fa2ea00193b5b7d3973e3990da7f608027c",
-  "device": "xiaomi_ax9000",
-  "easytier_version": "2.6.4",
-  "easytier_archive_sha256": "f533ec25a7ea714e09f645615012200278058525795cc3bb690ff011aec1a70f"
-}

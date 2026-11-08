@@ -1,0 +1,50 @@
+#!/bin/sh
+# Set the Wi-Fi password and turn on the three SSIDs laid out at first boot.
+# Run over the wired LAN. Reads the password from the terminal without echo,
+# or from stdin when it is piped in, and never puts it on a command line.
+set -eu
+. /lib/ax9000-wifi.sh
+
+for s in ax9000_2g ax9000_5g ax9000_game; do
+	if [ "$(uci -q get "wireless.$s" || true)" != wifi-iface ]; then
+		echo "wireless.$s is missing: first-boot setup has not completed (logread -e ax9000-wireless)" >&2
+		exit 1
+	fi
+done
+ax9000_wifi_map || { echo "radio mapping incomplete" >&2; exit 1; }
+
+if [ -t 0 ]; then
+	printf 'Wi-Fi password: ' >&2
+	stty -echo
+	trap 'stty echo' EXIT INT TERM
+	IFS= read -r key
+	stty echo
+	trap - EXIT INT TERM
+	printf '\n' >&2
+else
+	IFS= read -r key
+fi
+
+len=${#key}
+if [ "$len" -lt 8 ] || [ "$len" -gt 63 ]; then
+	echo "WPA2 password must be 8-63 characters" >&2
+	exit 1
+fi
+
+# uci batch takes the value on stdin; quote it for uci's shell-like parser.
+q=$(printf '%s' "$key" | sed "s/'/'\\\\''/g")
+{
+	for s in ax9000_2g ax9000_5g ax9000_game; do
+		printf "set wireless.%s.key='%s'\n" "$s" "$q"
+		printf 'set wireless.%s.disabled=0\n' "$s"
+	done
+	for dev in "$ax9000_2g" "$ax9000_5g" "$ax9000_game"; do
+		printf 'set wireless.%s.disabled=0\n' "$dev"
+	done
+	printf 'set wireless.%s.disabled=1\n' "$ax9000_iot"
+	echo commit wireless
+} | uci batch >/dev/null
+unset key q
+
+wifi reload
+echo "Enabled $AX9000_SSID_2G, $AX9000_SSID_5G, $AX9000_SSID_GAME"

@@ -1,0 +1,40 @@
+#!/bin/sh
+# Lay out the three SSIDs on the right radios, switched off: the image carries
+# no Wi-Fi password. `ax9000-wifi-setup` (over the wired LAN) sets it and turns
+# them on. If the radios are not all up yet this exits non-zero, so the
+# uci-defaults framework keeps the script and retries on the next boot.
+board=$(ubus call system board 2>/dev/null | jsonfilter -e '@.board_name' 2>/dev/null)
+[ "$board" = xiaomi,ax9000-stock ] || exit 0
+
+. /lib/ax9000-wifi.sh
+
+[ -s /etc/config/wireless ] || wifi config
+if ! ax9000_wifi_map; then
+	logger -t ax9000-wireless "radio mapping incomplete (2g=$ax9000_2g 5g=$ax9000_5g game=$ax9000_game iot=$ax9000_iot); retrying next boot"
+	exit 1
+fi
+
+for iface in $(uci show wireless | sed -n "s/^wireless\.\([^.=]*\)=wifi-iface$/\1/p"); do
+	uci set "wireless.$iface.disabled=1"
+done
+
+add_ap() {
+	uci -q delete "wireless.$1"
+	uci set "wireless.$1=wifi-iface"
+	uci set "wireless.$1.device=$2"
+	uci set "wireless.$1.network=lan"
+	uci set "wireless.$1.mode=ap"
+	uci set "wireless.$1.ssid=$3"
+	uci set "wireless.$1.encryption=psk2"
+	uci set "wireless.$1.disabled=1"
+}
+
+add_ap ax9000_2g "$ax9000_2g" "$AX9000_SSID_2G"
+add_ap ax9000_5g "$ax9000_5g" "$AX9000_SSID_5G"
+add_ap ax9000_game "$ax9000_game" "$AX9000_SSID_GAME"
+
+for dev in "$ax9000_2g" "$ax9000_5g" "$ax9000_game" "$ax9000_iot"; do
+	uci set "wireless.$dev.disabled=1"
+done
+uci commit wireless
+exit 0

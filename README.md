@@ -1,23 +1,34 @@
-# Xiaomi AX9000 — qosmio NSS firmware build
+# Xiaomi AX9000 — ImmortalWrt (VIKINGYFY) with traditional NSS, stock layout
 
-Rebuilds, on GitHub Actions, the AX9000 image first built locally on
-2026-09-12, with every input pinned:
+Builds `xiaomi_ax9000-stock` on GitHub Actions: the Xiaomi U-Boot and its A/B
+`rootfs` / `rootfs_1` slots stay as they are; nothing here touches U-Boot or
+the partition table.
 
-- source: `qosmio/openwrt-ipq` `25.12-nss` @ `d6848fa` (`source.lock.json`)
-- feeds: each pinned to a commit in `feeds.conf`; `prepare.sh` checks the
-  checked-out revisions
-- packages: `config.seed`, identical to that build's seed except that the
-  campus-network `multidial` package is left out (it is installed separately)
-- EasyTier 2.6.4: the release ZIP the recipe would `wget` is fetched once and
-  checked against the SHA256 in `source.lock.json`
+- source: `VIKINGYFY/immortalwrt` branch `main` (`source.json`), the line that
+  keeps the traditional NSS stack (nss-drv, ECM, NSS qdiscs). Its default
+  `owrt` branch replaced that stack with a new PPE driver and is not used.
+- feeds: upstream's `feeds.conf.default` plus iStore, EasyTier and
+  sqm-scripts-nss (`feeds.conf`). Source and feeds follow their branches; the
+  commits a run used are in `provenance.json` in its artifact.
+- packages: `config.seed`, the 2026-09-12 package set without the campus
+  `multidial` package, which is installed separately.
+- local patches:
+  - `patches/target/0001-*`: produce `initramfs-factory.ubi` for the stock
+    profile (upstream leaves `ARTIFACTS` empty), the first-stage image
+    written to the inactive slot;
+  - `patches/mac80211/nss/ath11k/999-*`: keep the right peer when a station
+    changes band (see the patch header).
+- first boot (`files/`): LAN 192.168.20.1/24, WAN DHCP; the three SSIDs are
+  laid out on the radios picked by PCI path (QCN9074 for Game, QCA9887 off)
+  but stay off, because the image carries no Wi-Fi password. Over the wired
+  LAN run `ax9000-wifi-setup`; it reads the password without echo and turns
+  them on.
 
-`scripts/verify.py` fails the run if `make defconfig` drops any seed symbol, or
-if the image's package list differs from `reference/ax9000-2026-09-12.manifest`
-(minus `multidial`). Version differences are listed in `manifest-diff.json`.
+`scripts/verify.py` fails the run if `make defconfig` drops a seed symbol, a
+seed package is missing from the image, the ath11k fix did not reach the
+built tree, or the sysupgrade image leaves under 4 MiB of overlay in a stock
+slot (`stock-slot-report.json`).
 
-Run it with **Actions → Build AX9000 → Run workflow**. The artifact contains
-`firmware/` (images, buildinfo, `SHA256SUMS.local`), the matching packages and
-the logs; it is kept for 2 days.
-
-A successful build is not a flashing go-ahead. Flashing this device is a
-separate, manual procedure (stock layout checks, initramfs first).
+Run it with **Actions → Build AX9000 → Run workflow**. Artifacts are kept for
+2 days. A successful build is not a flashing go-ahead: flashing is a separate,
+manual two-stage procedure (initramfs into the inactive slot first).

@@ -1,0 +1,11 @@
+#!/bin/sh
+# Keep the management LAN where the stock firmware had it; WAN is a DHCP client.
+board=$(ubus call system board 2>/dev/null | jsonfilter -e '@.board_name' 2>/dev/null)
+[ "$board" = xiaomi,ax9000-stock ] || exit 0
+
+uci set network.lan.proto=static
+uci set network.lan.ipaddr=192.168.20.1
+uci set network.lan.netmask=255.255.255.0
+uci set network.wan.proto=dhcp
+uci commit network
+exit 0

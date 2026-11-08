@@ -42,19 +42,18 @@ jobs:
           df -h
       # The seed sets CONFIG_CCACHE with an empty CONFIG_CCACHE_DIR, so OpenWrt
       # uses source/.ccache -- cache that path, not a CCACHE_DIR env var (rules.mk
-      # overrides it). The key carries the run id so every run saves a fresh
-      # cache; restore-keys picks up the newest one for the same inputs.
+      # overrides it). The source and feeds follow their branches, so the key is just the run id:
+      # every run saves a fresh cache and restores the newest one.
       - name: Restore source download and compiler caches
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             source/dl
             source/.ccache
-          key: ax9000-${{ hashFiles('source.lock.json', 'feeds.conf', 'config.seed') }}-${{ github.run_id }}
+          key: ax9000-viking-${{ github.run_id }}
           restore-keys: |
-            ax9000-${{ hashFiles('source.lock.json', 'feeds.conf', 'config.seed') }}-
-            ax9000-
-      - name: Lock source, configure feeds and verify the configuration
+            ax9000-viking-
+      - name: Fetch source, configure feeds and verify the configuration
         run: bash scripts/prepare.sh
       - name: Download source archives
         working-directory: source
@@ -75,8 +74,8 @@ jobs:
           path: |
             source/dl
             source/.ccache
-          key: ax9000-${{ hashFiles('source.lock.json', 'feeds.conf', 'config.seed') }}-${{ github.run_id }}
-      - name: Compare with the 2026-09-12 image and collect firmware
+          key: ax9000-viking-${{ github.run_id }}
+      - name: Audit packages, ath11k fix and stock slot size; collect firmware
         run: python3 scripts/verify.py images "$GITHUB_WORKSPACE"
       - name: Archive matching kernel modules and packages
         run: tar -I 'zstd -T0 -3' -cf artifacts/matching-packages.tar.zst -C source/bin packages targets/qualcommax/ipq807x/packages
