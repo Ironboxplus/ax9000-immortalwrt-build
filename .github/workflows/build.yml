@@ -75,6 +75,9 @@ jobs:
             source/dl
             source/.ccache
           key: ax9000-viking-${{ github.run_id }}
+      - name: Size of each package in the rootfs
+        if: always() && steps.compile.outcome == 'success'
+        run: python3 scripts/sizes.py "$GITHUB_WORKSPACE"
       - name: Audit packages, ath11k fix and stock slot size; collect firmware
         run: python3 scripts/verify.py images "$GITHUB_WORKSPACE"
       - name: Archive matching kernel modules and packages
