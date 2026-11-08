@@ -32,12 +32,15 @@ def main():
     cfg = (root / 'source/.config').read_text()
     wanted = set(re.findall(r'^CONFIG_(.+)=y$', seed, re.M))
     enabled = set(re.findall(r'^CONFIG_(.+)=y$', cfg, re.M))
+    unwanted = set(re.findall(r'^# CONFIG_(.+) is not set$', seed, re.M))
     missing = sorted(wanted - enabled)
+    reenabled = sorted(unwanted & enabled)
     forbidden = sorted(x for x in enabled if x.startswith('PACKAGE_') and x[8:] in EXCLUDED)
     devices = sorted(x for x in enabled if x.startswith('TARGET_') and '_DEVICE_' in x)
-    report = dict(missing_after_defconfig=missing, forbidden=forbidden, selected_devices=devices)
+    report = dict(missing_after_defconfig=missing, reenabled_after_defconfig=reenabled,
+                  forbidden=forbidden, selected_devices=devices)
     (artifacts / 'config-audit.json').write_text(json.dumps(report, indent=2))
-    if missing or forbidden or devices != [f'TARGET_qualcommax_ipq807x_DEVICE_{DEVICE}']:
+    if missing or reenabled or forbidden or devices != [f'TARGET_qualcommax_ipq807x_DEVICE_{DEVICE}']:
         raise SystemExit(json.dumps(report, indent=2))
     if mode == 'config':
         print('CONFIG_AUDIT_PASS', len(wanted), 'seed symbols kept')
