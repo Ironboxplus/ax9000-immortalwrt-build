@@ -1,0 +1,98 @@
+name: Build AX9000
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ax9000-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  firmware:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    env:
+      TZ: Asia/Singapore
+    steps:
+      - name: Checkout build configuration
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Inspect runner disk
+        run: |
+          date -Is
+          df -h
+          nproc
+          free -h
+      - name: Free runner disk with bounded cleanup
+        timeout-minutes: 4
+        run: |
+          for path in /usr/local/lib/android /usr/share/dotnet /opt/ghc /opt/hostedtoolcache/CodeQL; do
+            echo "[$(date -Is)] Removing optional runner tools: $path"
+            timeout 40s sudo rm -rf "$path" || echo "Cleanup timed out for $path; continuing"
+          done
+          df -h
+      - name: Update apt package indexes
+        timeout-minutes: 4
+        run: timeout 180s sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
+      - name: Install build dependencies
+        timeout-minutes: 8
+        run: |
+          timeout 420s sudo env DEBIAN_FRONTEND=noninteractive apt-get -o Dpkg::Use-Pty=0 install --no-install-recommends -y build-essential clang flex bison g++ gawk gcc-multilib gettext git \
+            libncurses-dev libssl-dev python3 python3-setuptools rsync swig unzip zlib1g-dev file wget \
+            xsltproc libelf-dev device-tree-compiler zstd ccache ninja-build pkgconf texinfo libtool-bin \
+            libzstd-dev gperf libfuse-dev
+          df -h
+      # The seed sets CONFIG_CCACHE with an empty CONFIG_CCACHE_DIR, so OpenWrt
+      # uses source/.ccache -- cache that path, not a CCACHE_DIR env var (rules.mk
+      # overrides it). The key carries the run id so every run saves a fresh
+      # cache; restore-keys picks up the newest one for the same inputs.
+      - name: Restore source download and compiler caches
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            source/dl
+            source/.ccache
+          key: ax9000-${{ hashFiles('source.lock.json', 'feeds.conf', 'config.seed') }}-${{ github.run_id }}
+          restore-keys: |
+            ax9000-${{ hashFiles('source.lock.json', 'feeds.conf', 'config.seed') }}-
+            ax9000-
+      - name: Lock source, configure feeds and verify the configuration
+        run: bash scripts/prepare.sh
+      - name: Download source archives
+        working-directory: source
+        run: |
+          set -o pipefail
+          make download -j8 V=s 2>&1 | tee ../artifacts/download.log
+      - name: Compile AX9000 firmware
+        id: compile
+        working-directory: source
+        run: |
+          set -o pipefail
+          make -j"$(nproc)" V=s 2>&1 | tee ../artifacts/build.log || \
+            make -j1 V=s 2>&1 | tee ../artifacts/build-serial.log
+      - name: Save source download and compiler caches
+        if: always() && steps.compile.outcome != 'skipped'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            source/dl
+            source/.ccache
+          key: ax9000-${{ hashFiles('source.lock.json', 'feeds.conf', 'config.seed') }}-${{ github.run_id }}
+      - name: Compare with the 2026-09-12 image and collect firmware
+        run: python3 scripts/verify.py images "$GITHUB_WORKSPACE"
+      - name: Archive matching kernel modules and packages
+        run: tar -I 'zstd -T0 -3' -cf artifacts/matching-packages.tar.zst -C source/bin packages targets/qualcommax/ipq807x/packages
+      - name: Save diagnostics even on failure
+        if: always()
+        run: |
+          mkdir -p artifacts
+          test ! -f source/.config || cp source/.config artifacts/config.resolved
+          test ! -d source/logs || tar -czf artifacts/openwrt-logs.tar.gz -C source logs
+          (command -v ccache >/dev/null && CCACHE_DIR=source/.ccache ccache -s) > artifacts/ccache-stats.txt 2>&1 || true
+          df -h > artifacts/runner-disk.txt
+      - name: Upload build output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ax9000-${{ github.run_number }}-${{ github.run_attempt }}
+          path: artifacts/
+          retention-days: 2
+          if-no-files-found: error

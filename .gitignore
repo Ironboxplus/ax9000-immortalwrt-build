@@ -1,0 +1,5 @@
+source/
+artifacts/
+__pycache__/
+.cache/
+.work/
