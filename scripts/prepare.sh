@@ -10,6 +10,12 @@ git init source
 git -C source remote add origin "$source_url"
 git -C source fetch --depth=1 origin "$source_branch"
 git -C source checkout --detach FETCH_HEAD
+# ccache's default compiler_check is the compiler's mtime, and every run builds
+# the cross toolchain afresh, so no target object would ever hit across runs.
+# Key on what the compiler reports about itself instead.
+mkdir -p source/.ccache
+printf 'compiler_check = %%compiler%% -v\n' > source/.ccache/ccache.conf
+CCACHE_DIR=source/.ccache ccache -z
 # The upstream feeds (unpinned, as upstream ships them) plus ours.
 cat source/feeds.conf.default feeds.conf > source/feeds.conf.default.new
 mv source/feeds.conf.default.new source/feeds.conf.default
