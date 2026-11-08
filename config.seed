@@ -45,6 +45,9 @@ CONFIG_PACKAGE_ip-full=y
 CONFIG_PACKAGE_python3-light=y
 CONFIG_PACKAGE_python3-logging=y
 CONFIG_PACKAGE_python3-urllib=y
+# python3 configures with --with-system-ffi and its PGO build compiles _ctypes
+# regardless; without a package that pulls in libffi, ffi.h is never staged.
+CONFIG_PACKAGE_python3-ctypes=y
 
 # iStore
 CONFIG_PACKAGE_luci-app-store=y
