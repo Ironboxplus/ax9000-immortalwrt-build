@@ -32,8 +32,11 @@ def main():
     cfg = (root / 'source/.config').read_text()
     wanted = set(re.findall(r'^CONFIG_(.+)=y$', seed, re.M))
     enabled = set(re.findall(r'^CONFIG_(.+)=y$', cfg, re.M))
+    # =m packages are built as installable .apk files but left out of the image.
+    wanted_m = set(re.findall(r'^CONFIG_PACKAGE_(.+)=m$', seed, re.M))
+    built = enabled | {'PACKAGE_' + x for x in re.findall(r'^CONFIG_PACKAGE_(.+)=m$', cfg, re.M)}
     unwanted = set(re.findall(r'^# CONFIG_(.+) is not set$', seed, re.M))
-    missing = sorted(wanted - enabled)
+    missing = sorted((wanted - enabled) | ({'PACKAGE_' + x for x in wanted_m} - built))
     reenabled = sorted(unwanted & enabled)
     forbidden = sorted(x for x in enabled if x.startswith('PACKAGE_') and x[8:] in EXCLUDED)
     devices = sorted(x for x in enabled if x.startswith('TARGET_') and '_DEVICE_' in x)
@@ -63,6 +66,15 @@ def main():
         raise SystemExit(f'Expected one built ath11k tree with ath11k.ko, found {len(ath11k)}')
     if 'from the addr rhash only' not in (ath11k[0] / 'peer.c').read_text():
         raise SystemExit('ath11k was built without the band-migration fix')
+    ecm = list((root / 'source/build_dir').glob('target-*/linux-*/qca-nss-ecm-*'))
+    if len(ecm) != 1 or not list(ecm[0].glob('**/ecm.ko')):
+        raise SystemExit(f'Expected one built qca-nss-ecm tree with ecm.ko, found {len(ecm)}')
+    if 'ecm_interface_is_unaccelerable_macvlan' not in (ecm[0] / 'frontends/cmn/ecm_ipv4.c').read_text():
+        raise SystemExit('ECM was built without the non-private macvlan skip')
+    unbuilt = sorted(x for x in wanted_m
+                     if not list((root / 'source/bin/packages').glob(f'*/*/{x}-[0-9]*.apk')))
+    if unbuilt:
+        raise SystemExit(f'=m packages without a built .apk: {unbuilt}')
 
     found = {}
     for suffix in IMAGES:

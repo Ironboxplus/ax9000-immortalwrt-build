@@ -1,0 +1,20 @@
+name: Test build scripts
+on:
+  push:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  scripts:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Unit tests for verify.py and sizes.py
+        run: |
+          for t in tests/test_*.py; do python3 "$t"; done
+      - name: Local patches are well-formed
+        run: |
+          for p in patches/target/*.patch patches/mac80211/nss/ath11k/*.patch patches/qca-nss-ecm/*.patch; do
+            git apply --stat "$p" > /dev/null || { echo "::error file=$p::not a valid patch"; exit 1; }
+          done

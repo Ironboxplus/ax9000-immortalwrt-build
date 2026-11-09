@@ -27,6 +27,7 @@ for p in patches/target/*.patch; do
 	git -C source apply --verbose "$repo_dir/$p"
 done
 cp patches/mac80211/nss/ath11k/*.patch source/package/kernel/mac80211/patches/nss/ath11k/
+cp patches/qca-nss-ecm/*.patch source/package/qca-nss/qca-nss-ecm/patches/
 # libffi moved from the packages feed into core on 2026-10-19; a source tree
 # older than that combined with the current feed has it nowhere. Take the core
 # recipe from ImmortalWrt until the source tree carries its own.
@@ -46,6 +47,7 @@ cd source
 ./scripts/feeds install -a -f -p istore
 ./scripts/feeds install -a -f -p easytier
 ./scripts/feeds install -a -f -p sqm_scripts_nss
+./scripts/feeds install -a -f -p cakeautorate
 python3 - "$repo_dir" <<'PY'
 import hashlib, json, pathlib, subprocess, sys
 root = pathlib.Path(sys.argv[1])
