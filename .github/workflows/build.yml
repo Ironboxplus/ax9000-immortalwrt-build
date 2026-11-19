@@ -120,6 +120,10 @@ jobs:
         run: python3 scripts/sizes.py "$GITHUB_WORKSPACE"
       - name: Audit packages, ath11k fix and stock slot size; collect firmware
         run: python3 scripts/verify.py images "$GITHUB_WORKSPACE"
+      - name: Check the image formats offline (UBI geometry, FIT device tree, sysupgrade metadata)
+        run: |
+          pip install --user --break-system-packages fdt==0.3.3 ubi_reader==0.8.16
+          python3 scripts/verify_images.py artifacts/firmware
       - name: Archive matching kernel modules and packages
         run: tar -I 'zstd -T0 -3' -cf artifacts/matching-packages.tar.zst -C source/bin packages targets/qualcommax/ipq807x/packages
       - name: Save diagnostics even on failure
