@@ -1,0 +1,35 @@
+name: Verify AX9000 images
+# Offline format checks on the images of an earlier build run, without
+# rebuilding (build.yml runs the same script on every new build).
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Build run whose artifact holds the images
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  images:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: build
+      - name: Check the image formats offline (UBI geometry, FIT device tree, sysupgrade metadata)
+        run: |
+          pip install --user --break-system-packages fdt==0.3.3 ubi_reader==0.8.16
+          fw=$(ls -d build/*/firmware)
+          (cd "$fw" && sha256sum -c sha256sums --ignore-missing)
+          python3 scripts/verify_images.py "$fw"
+          cp "$fw/../image-verification.json" .
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: image-verification-${{ inputs.run_id }}
+          path: image-verification.json
+          retention-days: 2
