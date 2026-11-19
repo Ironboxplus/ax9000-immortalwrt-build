@@ -17,7 +17,13 @@ the partition table.
     profile (upstream leaves `ARTIFACTS` empty), the first-stage image
     written to the inactive slot;
   - `patches/mac80211/nss/ath11k/999-*`: keep the right peer when a station
-    changes band (see the patch header).
+    changes band; print every PDEV_ERRS/WHAL_TX htt_stats field (both ported
+    from the Arthur build, see the patch headers). `CONFIG_PACKAGE_ATH_DEBUG`
+    compiles `ath11k_dbg()` in so the `debug_mask` module parameter works.
+    The Arthur crash-recovery VAP-delete patch is deliberately not ported: it
+    turned a firmware crash recovery into a full reboot there.
+- `files/etc/sysctl.d/99-ax9000-netlink.conf`: rmem_max 1 MiB so nlbwmon's
+  netlink dumps do not overflow.
 - first boot (`files/`): LAN 192.168.20.1/24, WAN DHCP; the three SSIDs are
   laid out on the radios picked by PCI path (QCN9074 for Game, QCA9887 off)
   but stay off, because the image carries no Wi-Fi password. Over the wired

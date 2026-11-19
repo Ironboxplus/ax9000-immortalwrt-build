@@ -1,0 +1,282 @@
+From: AX9000 build <ax9000@localhost>
+Subject: [PATCH] ath11k: htt_stats: print all PDEV_ERRS fields, bounded by TLV length
+
+Ported from arthur-immortalwrt-build, where it was written for diagnosing
+the IPQ6018 radio hangs; kept here so the same counters are readable on
+IPQ8074/QCN9074 without a rebuild. debugfs htt_stats (type 5,
+PDEV_ERROR) printed only the first 11 words of HTT_STATS_HW_PDEV_ERRS_TAG
+(tx/rx abort .. rx_timeout_reset), but current firmware reports the MAC/PHY
+reset counters and reasons after them (mac_cold_reset_restore_cal ..
+phy_warm_reset, phy_warm_reset_reason_*, wal_rx_recovery_rst_*_count,
+rx_flush_cnt, fw_rx_rings_reset). Field list from the QSDK ath11k
+(Telecominfraproject/wlan-ap feeds/qca-wifi-7 debugfs_htt_stats.h).
+
+Both this printer and the WHAL_TX one read a fixed-size structure without
+looking at the TLV length, so a shorter TLV from older firmware made them
+read past it. Print both from a name table, only as many words as the TLV
+holds; a TLV longer than the known structure has its extra words printed
+raw in hex, and a length that differs from the structure is reported.
+WHAL_TX keeps its 12 fields (mac_id .. sch_rx_sifs_resp_trigger), with the
+missing space in "sch_rx_sifs_resp_trigger =" restored.
+
+diff --git a/drivers/net/wireless/ath/ath11k/debugfs_htt_stats.c b/drivers/net/wireless/ath/ath11k/debugfs_htt_stats.c
+index 731f3ca..933caf8 100644
+--- a/drivers/net/wireless/ath/ath11k/debugfs_htt_stats.c
++++ b/drivers/net/wireless/ath/ath11k/debugfs_htt_stats.c
+@@ -420,37 +420,41 @@ htt_print_hw_stats_wd_timeout_tlv(const void *tag_buf,
+ 	stats_req->buf_len = len;
+ }
+ 
+-static inline void htt_print_hw_stats_pdev_errs_tlv(const void *tag_buf,
+-						    struct debug_htt_stats_req *stats_req)
++/* Print a TLV that is a flat array of u32 counters whose word 0 is
++ * mac_id__word, bounded by the length the firmware sent: firmware
++ * versions append fields, so a TLV may be shorter or longer than the
++ * structure. Words past the known names are printed raw in hex.
++ */
++static void htt_print_u32_tlv_bounded(const char *title,
++				      const char * const *names, u32 num_names,
++				      const void *tag_buf, u16 tag_len,
++				      struct debug_htt_stats_req *stats_req)
+ {
+-	const struct htt_hw_stats_pdev_errs_tlv *htt_stats_buf = tag_buf;
++	const u32 *word = tag_buf;
++	u32 num_words = tag_len / sizeof(u32);
+ 	u8 *buf = stats_req->buf;
+ 	u32 len = stats_req->buf_len;
+ 	u32 buf_len = ATH11K_HTT_STATS_BUF_SIZE;
++	u32 i;
+ 
+-	len += scnprintf(buf + len, buf_len - len, "HTT_HW_STATS_PDEV_ERRS_TLV:\n");
+-	len += scnprintf(buf + len, buf_len - len, "mac_id = %lu\n",
+-			 FIELD_GET(HTT_STATS_MAC_ID, htt_stats_buf->mac_id__word));
+-	len += scnprintf(buf + len, buf_len - len, "tx_abort = %u\n",
+-			 htt_stats_buf->tx_abort);
+-	len += scnprintf(buf + len, buf_len - len, "tx_abort_fail_count = %u\n",
+-			 htt_stats_buf->tx_abort_fail_count);
+-	len += scnprintf(buf + len, buf_len - len, "rx_abort = %u\n",
+-			 htt_stats_buf->rx_abort);
+-	len += scnprintf(buf + len, buf_len - len, "rx_abort_fail_count = %u\n",
+-			 htt_stats_buf->rx_abort_fail_count);
+-	len += scnprintf(buf + len, buf_len - len, "warm_reset = %u\n",
+-			 htt_stats_buf->warm_reset);
+-	len += scnprintf(buf + len, buf_len - len, "cold_reset = %u\n",
+-			 htt_stats_buf->cold_reset);
+-	len += scnprintf(buf + len, buf_len - len, "tx_flush = %u\n",
+-			 htt_stats_buf->tx_flush);
+-	len += scnprintf(buf + len, buf_len - len, "tx_glb_reset = %u\n",
+-			 htt_stats_buf->tx_glb_reset);
+-	len += scnprintf(buf + len, buf_len - len, "tx_txq_reset = %u\n",
+-			 htt_stats_buf->tx_txq_reset);
+-	len += scnprintf(buf + len, buf_len - len, "rx_timeout_reset = %u\n\n",
+-			 htt_stats_buf->rx_timeout_reset);
++	len += scnprintf(buf + len, buf_len - len, "%s:\n", title);
++	if (num_words != num_names || tag_len % sizeof(u32))
++		len += scnprintf(buf + len, buf_len - len,
++				 "tlv_len = %u (%u words, %u known)\n",
++				 tag_len, num_words, num_names);
++
++	for (i = 0; i < num_words; i++) {
++		if (i == 0)
++			len += scnprintf(buf + len, buf_len - len, "mac_id = %lu\n",
++					 FIELD_GET(HTT_STATS_MAC_ID, word[0]));
++		else if (i < num_names)
++			len += scnprintf(buf + len, buf_len - len, "%s = %u\n",
++					 names[i], word[i]);
++		else
++			len += scnprintf(buf + len, buf_len - len,
++					 "word[%u] = 0x%08x\n", i, word[i]);
++	}
++	len += scnprintf(buf + len, buf_len - len, "\n");
+ 
+ 	if (len >= buf_len)
+ 		buf[buf_len - 1] = 0;
+@@ -460,6 +464,60 @@ static inline void htt_print_hw_stats_pdev_errs_tlv(const void *tag_buf,
+ 	stats_req->buf_len = len;
+ }
+ 
++/* Field order of struct htt_hw_stats_pdev_errs_tlv. */
++static const char * const htt_hw_stats_pdev_errs_names[] = {
++	"mac_id",
++	"tx_abort",
++	"tx_abort_fail_count",
++	"rx_abort",
++	"rx_abort_fail_count",
++	"warm_reset",
++	"cold_reset",
++	"tx_flush",
++	"tx_glb_reset",
++	"tx_txq_reset",
++	"rx_timeout_reset",
++	"mac_cold_reset_restore_cal",
++	"mac_cold_reset",
++	"mac_warm_reset",
++	"mac_only_reset",
++	"phy_warm_reset",
++	"phy_warm_reset_ucode_trig",
++	"mac_warm_reset_restore_cal",
++	"mac_sfm_reset",
++	"phy_warm_reset_m3_ssr",
++	"phy_warm_reset_reason_phy_m3",
++	"phy_warm_reset_reason_tx_hw_stuck",
++	"phy_warm_reset_reason_num_cca_rx_frame_stuck",
++	"phy_warm_reset_reason_wal_rx_recovery_rst_rx_busy",
++	"phy_warm_reset_reason_wal_rx_recovery_rst_mac_hang",
++	"phy_warm_reset_reason_mac_reset_converted_phy_reset",
++	"wal_rx_recovery_rst_mac_hang_count",
++	"wal_rx_recovery_rst_known_sig_count",
++	"wal_rx_recovery_rst_no_rx_count",
++	"wal_rx_recovery_rst_no_rx_consecutive_count",
++	"wal_rx_recovery_rst_rx_busy_count",
++	"wal_rx_recovery_rst_phy_mac_hang_count",
++	"rx_flush_cnt",
++	"phy_warm_reset_reason_tx_lifetime_expiry_cca_stuck",
++	"phy_warm_reset_reason_tx_consecutive_flush9_war",
++	"phy_warm_reset_reason_tx_hwsch_reset_war",
++	"phy_warm_reset_reason_hwsch_wdog_or_cca_wdog_war",
++	"fw_rx_rings_reset",
++};
++
++static inline void htt_print_hw_stats_pdev_errs_tlv(const void *tag_buf, u16 tag_len,
++						    struct debug_htt_stats_req *stats_req)
++{
++	BUILD_BUG_ON(ARRAY_SIZE(htt_hw_stats_pdev_errs_names) !=
++		     sizeof(struct htt_hw_stats_pdev_errs_tlv) / sizeof(u32));
++
++	htt_print_u32_tlv_bounded("HTT_HW_STATS_PDEV_ERRS_TLV",
++				  htt_hw_stats_pdev_errs_names,
++				  ARRAY_SIZE(htt_hw_stats_pdev_errs_names),
++				  tag_buf, tag_len, stats_req);
++}
++
+ static inline void htt_print_msdu_flow_stats_tlv(const void *tag_buf,
+ 						 struct debug_htt_stats_req *stats_req)
+ {
+@@ -3539,47 +3597,32 @@ htt_print_pdev_stats_cca_counters_tlv(const void *tag_buf,
+ 	stats_req->buf_len = len;
+ }
+ 
+-static inline void htt_print_hw_stats_whal_tx_tlv(const void *tag_buf,
++/* Field order of struct htt_hw_stats_whal_tx_tlv. */
++static const char * const htt_hw_stats_whal_tx_names[] = {
++	"mac_id",
++	"last_unpause_ppdu_id",
++	"hwsch_unpause_wait_tqm_write",
++	"hwsch_dummy_tlv_skipped",
++	"hwsch_misaligned_offset_received",
++	"hwsch_reset_count",
++	"hwsch_dev_reset_war",
++	"hwsch_delayed_pause",
++	"hwsch_long_delayed_pause",
++	"sch_rx_ppdu_no_response",
++	"sch_selfgen_response",
++	"sch_rx_sifs_resp_trigger",
++};
++
++static inline void htt_print_hw_stats_whal_tx_tlv(const void *tag_buf, u16 tag_len,
+ 						  struct debug_htt_stats_req *stats_req)
+ {
+-	const struct htt_hw_stats_whal_tx_tlv *htt_stats_buf = tag_buf;
+-	u8 *buf = stats_req->buf;
+-	u32 len = stats_req->buf_len;
+-	u32 buf_len = ATH11K_HTT_STATS_BUF_SIZE;
+-
+-	len += scnprintf(buf + len, buf_len - len, "HTT_HW_STATS_WHAL_TX_TLV:\n");
+-	len += scnprintf(buf + len, buf_len - len, "mac_id = %lu\n",
+-			 FIELD_GET(HTT_STATS_MAC_ID, htt_stats_buf->mac_id__word));
+-	len += scnprintf(buf + len, buf_len - len, "last_unpause_ppdu_id = %u\n",
+-			 htt_stats_buf->last_unpause_ppdu_id);
+-	len += scnprintf(buf + len, buf_len - len, "hwsch_unpause_wait_tqm_write = %u\n",
+-			 htt_stats_buf->hwsch_unpause_wait_tqm_write);
+-	len += scnprintf(buf + len, buf_len - len, "hwsch_dummy_tlv_skipped = %u\n",
+-			 htt_stats_buf->hwsch_dummy_tlv_skipped);
+-	len += scnprintf(buf + len, buf_len - len,
+-			 "hwsch_misaligned_offset_received = %u\n",
+-			 htt_stats_buf->hwsch_misaligned_offset_received);
+-	len += scnprintf(buf + len, buf_len - len, "hwsch_reset_count = %u\n",
+-			 htt_stats_buf->hwsch_reset_count);
+-	len += scnprintf(buf + len, buf_len - len, "hwsch_dev_reset_war = %u\n",
+-			 htt_stats_buf->hwsch_dev_reset_war);
+-	len += scnprintf(buf + len, buf_len - len, "hwsch_delayed_pause = %u\n",
+-			 htt_stats_buf->hwsch_delayed_pause);
+-	len += scnprintf(buf + len, buf_len - len, "hwsch_long_delayed_pause = %u\n",
+-			 htt_stats_buf->hwsch_long_delayed_pause);
+-	len += scnprintf(buf + len, buf_len - len, "sch_rx_ppdu_no_response = %u\n",
+-			 htt_stats_buf->sch_rx_ppdu_no_response);
+-	len += scnprintf(buf + len, buf_len - len, "sch_selfgen_response = %u\n",
+-			 htt_stats_buf->sch_selfgen_response);
+-	len += scnprintf(buf + len, buf_len - len, "sch_rx_sifs_resp_trigger= %u\n\n",
+-			 htt_stats_buf->sch_rx_sifs_resp_trigger);
+-
+-	if (len >= buf_len)
+-		buf[buf_len - 1] = 0;
+-	else
+-		buf[len] = 0;
++	BUILD_BUG_ON(ARRAY_SIZE(htt_hw_stats_whal_tx_names) !=
++		     sizeof(struct htt_hw_stats_whal_tx_tlv) / sizeof(u32));
+ 
+-	stats_req->buf_len = len;
++	htt_print_u32_tlv_bounded("HTT_HW_STATS_WHAL_TX_TLV",
++				  htt_hw_stats_whal_tx_names,
++				  ARRAY_SIZE(htt_hw_stats_whal_tx_names),
++				  tag_buf, tag_len, stats_req);
+ }
+ 
+ static inline void
+@@ -4433,7 +4476,7 @@ static int ath11k_dbg_htt_ext_stats_parse(struct ath11k_base *ab,
+ 		break;
+ 
+ 	case HTT_STATS_HW_PDEV_ERRS_TAG:
+-		htt_print_hw_stats_pdev_errs_tlv(tag_buf, stats_req);
++		htt_print_hw_stats_pdev_errs_tlv(tag_buf, len, stats_req);
+ 		break;
+ 
+ 	case HTT_STATS_COUNTER_NAME_TAG:
+@@ -4487,7 +4530,7 @@ static int ath11k_dbg_htt_ext_stats_parse(struct ath11k_base *ab,
+ 		break;
+ 
+ 	case HTT_STATS_WHAL_TX_TAG:
+-		htt_print_hw_stats_whal_tx_tlv(tag_buf, stats_req);
++		htt_print_hw_stats_whal_tx_tlv(tag_buf, len, stats_req);
+ 		break;
+ 
+ 	case HTT_STATS_PDEV_TWT_SESSIONS_TAG:
+diff --git a/drivers/net/wireless/ath/ath11k/debugfs_htt_stats.h b/drivers/net/wireless/ath/ath11k/debugfs_htt_stats.h
+index f543eaf..8942173 100644
+--- a/drivers/net/wireless/ath/ath11k/debugfs_htt_stats.h
++++ b/drivers/net/wireless/ath/ath11k/debugfs_htt_stats.h
+@@ -291,6 +291,34 @@ struct htt_hw_stats_pdev_errs_tlv {
+ 	u32    tx_glb_reset;
+ 	u32    tx_txq_reset;
+ 	u32    rx_timeout_reset;
++	/* Newer firmware appends the fields below; check the TLV length. */
++	u32    mac_cold_reset_restore_cal;
++	u32    mac_cold_reset;
++	u32    mac_warm_reset;
++	u32    mac_only_reset;
++	u32    phy_warm_reset;
++	u32    phy_warm_reset_ucode_trig;
++	u32    mac_warm_reset_restore_cal;
++	u32    mac_sfm_reset;
++	u32    phy_warm_reset_m3_ssr;
++	u32    phy_warm_reset_reason_phy_m3;
++	u32    phy_warm_reset_reason_tx_hw_stuck;
++	u32    phy_warm_reset_reason_num_cca_rx_frame_stuck;
++	u32    phy_warm_reset_reason_wal_rx_recovery_rst_rx_busy;
++	u32    phy_warm_reset_reason_wal_rx_recovery_rst_mac_hang;
++	u32    phy_warm_reset_reason_mac_reset_converted_phy_reset;
++	u32    wal_rx_recovery_rst_mac_hang_count;
++	u32    wal_rx_recovery_rst_known_sig_count;
++	u32    wal_rx_recovery_rst_no_rx_count;
++	u32    wal_rx_recovery_rst_no_rx_consecutive_count;
++	u32    wal_rx_recovery_rst_rx_busy_count;
++	u32    wal_rx_recovery_rst_phy_mac_hang_count;
++	u32    rx_flush_cnt;
++	u32    phy_warm_reset_reason_tx_lifetime_expiry_cca_stuck;
++	u32    phy_warm_reset_reason_tx_consecutive_flush9_war;
++	u32    phy_warm_reset_reason_tx_hwsch_reset_war;
++	u32    phy_warm_reset_reason_hwsch_wdog_or_cca_wdog_war;
++	u32    fw_rx_rings_reset;
+ };
+ 
+ struct htt_hw_stats_whal_tx_tlv {

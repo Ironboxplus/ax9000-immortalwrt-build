@@ -66,6 +66,17 @@ def main():
         raise SystemExit(f'Expected one built ath11k tree with ath11k.ko, found {len(ath11k)}')
     if 'from the addr rhash only' not in (ath11k[0] / 'peer.c').read_text():
         raise SystemExit('ath11k was built without the band-migration fix')
+    module = (ath11k[0] / 'ath11k.ko').read_bytes()
+    markers = {
+        b'phy_warm_reset_reason_tx_hw_stuck': 'full PDEV_ERRS htt_stats',
+        # an ath11k_dbg() string: only present with ATH11K_DEBUG
+        b'nss vdev up tx msg success': 'ATH11K_DEBUG (ath11k_dbg compiled in)',
+    }
+    for marker, what in markers.items():
+        if marker not in module:
+            raise SystemExit(f'ath11k.ko lacks the {what}')
+    if not (root / 'files/etc/sysctl.d/99-ax9000-netlink.conf').exists():
+        raise SystemExit('rmem_max sysctl for nlbwmon is missing from files/')
     ecm = list((root / 'source/build_dir').glob('target-*/linux-*/qca-nss-ecm-*'))
     if len(ecm) != 1 or not list(ecm[0].glob('**/ecm.ko')):
         raise SystemExit(f'Expected one built qca-nss-ecm tree with ecm.ko, found {len(ecm)}')
