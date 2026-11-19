@@ -10,6 +10,9 @@ import tarfile
 DEVICE = 'xiaomi_ax9000-stock'
 EXCLUDED = {'multidial'}  # campus network code stays out of a public repo
 IMAGES = ['initramfs-factory.ubi', 'squashfs-sysupgrade.bin']
+# CONFIG_PACKAGE_* options that are build switches inside another package
+# (ATH_DEBUG compiles ath11k_dbg() into kmod-ath), so no manifest line exists.
+OPTIONS = {'ATH_DEBUG'}
 
 # Stock A/B layout: each of rootfs / rootfs_1 is 448 PEBs of 128 KiB. UBI keeps
 # 40 PEBs for bad blocks (20 per 1024 of the 256 MiB chip, not of the
@@ -54,7 +57,7 @@ def main():
     if len(manifests) != 1:
         raise SystemExit(f'Expected one {DEVICE} manifest, found {len(manifests)}')
     installed = {line.split(' - ')[0] for line in manifests[0].read_text().splitlines()}
-    packages = {x[8:] for x in wanted if x.startswith('PACKAGE_')}
+    packages = {x[8:] for x in wanted if x.startswith('PACKAGE_')} - OPTIONS
     absent = sorted(packages - installed)
     leaked = sorted(installed & EXCLUDED)
     if absent or leaked:
