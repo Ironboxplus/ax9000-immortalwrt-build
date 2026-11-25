@@ -9,6 +9,7 @@ usage: python verify_images.py FIRMWARE_DIR
 """
 import io
 import json
+import gzip
 from pathlib import Path
 import struct
 import sys
@@ -21,6 +22,8 @@ from ubireader.utils import guess_peb_size
 
 SLOT_BYTES = 0x3800000
 COMPAT = 'xiaomi,ax9000-stock'
+STOCK_UBOOT_FIT_ADDR = 0x44000000
+STOCK_KERNEL_LOADADDR = 0x40000000
 fw = Path(sys.argv[1])
 initramfs = next(fw.glob('*ax9000-stock-initramfs-factory.ubi'))
 sysupgrade = next(fw.glob('*ax9000-stock-squashfs-sysupgrade.bin'))
@@ -34,6 +37,13 @@ def check(name, ok, detail=''):
         failures.append(name)
 
 
+def property_bytes(prop):
+    """Normalize fdt.PropBytes and fdt.PropWords across fdt package versions."""
+    if isinstance(prop.data, (bytes, bytearray)):
+        return bytes(prop.data)
+    return b''.join(struct.pack('>I', word) for word in prop.data)
+
+
 def fit_dt_compatibles(blob):
     """Compatible strings of the device trees referenced by the FIT's configurations."""
     tree = fdt.parse_dtb(blob)
@@ -42,9 +52,26 @@ def fit_dt_compatibles(blob):
     out = {}
     for conf in confs.nodes:
         dt_name = conf.get_property('fdt').value
-        dt_blob = bytes(tree.get_node(f'/images/{dt_name}').get_property('data').data)
+        dt_blob = property_bytes(tree.get_node(f'/images/{dt_name}').get_property('data'))
         out[conf.name] = fdt.parse_dtb(dt_blob).root.get_property('compatible').data
     return default, out
+
+
+def fit_kernel_load_safety(blob):
+    """Check the large initramfs against the stock RA70 U-Boot load window."""
+    tree = fdt.parse_dtb(blob)
+    confs = tree.get_node('/configurations')
+    default = confs.get_property('default').value
+    conf = next(node for node in confs.nodes if node.name == default)
+    kernel_name = conf.get_property('kernel').value
+    image = tree.get_node(f'/images/{kernel_name}')
+    load = int(image.get_property('load').value)
+    entry = int(image.get_property('entry').value)
+    compression = image.get_property('compression').value
+    payload = property_bytes(image.get_property('data'))
+    uncompressed = gzip.decompress(payload) if compression == 'gzip' else payload
+    end = load + len(uncompressed)
+    return load, entry, len(uncompressed), end
 
 
 # initramfs-factory.ubi
@@ -64,6 +91,13 @@ kernel = b''.join(vols['kernel'].reader(ubi))
 default, compat = fit_dt_compatibles(kernel)
 check('initramfs FIT default config has the stock DT',
       COMPAT in compat.get(default, []), f'default={default} {compat}')
+load, entry, unpacked, end = fit_kernel_load_safety(kernel)
+check('initramfs FIT load address is the stock-safe address',
+      (load, entry) == (STOCK_KERNEL_LOADADDR, STOCK_KERNEL_LOADADDR),
+      f'load=0x{load:x} entry=0x{entry:x}')
+check('initramfs kernel does not overwrite the stock U-Boot FIT buffer',
+      end <= STOCK_UBOOT_FIT_ADDR,
+      f'unpacked={unpacked} end=0x{end:x} limit=0x{STOCK_UBOOT_FIT_ADDR:x}')
 
 # squashfs-sysupgrade.bin
 raw = sysupgrade.read_bytes()
@@ -76,6 +110,13 @@ check('sysupgrade CONTROL board', 'BOARD=xiaomi_ax9000-stock' in control, contro
 default, compat = fit_dt_compatibles(sys_kernel)
 check('sysupgrade FIT default config has the stock DT',
       COMPAT in compat.get(default, []), f'default={default} {compat}')
+load, entry, unpacked, end = fit_kernel_load_safety(sys_kernel)
+check('sysupgrade FIT load address is the stock-safe address',
+      (load, entry) == (STOCK_KERNEL_LOADADDR, STOCK_KERNEL_LOADADDR),
+      f'load=0x{load:x} entry=0x{entry:x}')
+check('sysupgrade kernel does not overwrite the stock U-Boot FIT buffer',
+      end <= STOCK_UBOOT_FIT_ADDR,
+      f'unpacked={unpacked} end=0x{end:x} limit=0x{STOCK_UBOOT_FIT_ADDR:x}')
 check('sysupgrade root is squashfs', root_head == b'hsqs', repr(root_head))
 # fwtool metadata: JSON followed by a trailer at the end of the image
 start = raw.rfind(b'{  "metadata_version"')
