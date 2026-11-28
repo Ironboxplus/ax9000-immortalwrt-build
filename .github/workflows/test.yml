@@ -16,5 +16,6 @@ jobs:
       - name: Local patches are well-formed
         run: |
           for p in patches/target/*.patch patches/mac80211/nss/ath11k/*.patch patches/qca-nss-ecm/*.patch; do
+            [ -e "$p" ] || continue
             git apply --stat "$p" > /dev/null || { echo "::error file=$p::not a valid patch"; exit 1; }
           done

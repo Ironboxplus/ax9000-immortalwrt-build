@@ -9,7 +9,7 @@ import tarfile
 
 DEVICE = 'xiaomi_ax9000-stock'
 EXCLUDED = {'multidial'}  # campus network code stays out of a public repo
-IMAGES = ['initramfs-factory.ubi', 'squashfs-sysupgrade.bin']
+IMAGES = ['squashfs-factory.ubi', 'squashfs-sysupgrade.bin']
 # CONFIG_PACKAGE_* options that are build switches inside another package
 # (ATH_DEBUG compiles ath11k_dbg() into kmod-ath), so no manifest line exists.
 OPTIONS = {'ATH_DEBUG'}
@@ -107,15 +107,15 @@ def main():
         kernel_bytes=kernels[0].size, rootfs_bytes=roots[0].size,
         slot_usable_lebs_estimate=USABLE_LEBS, used_lebs=used,
         overlay_left_bytes=(USABLE_LEBS - used) * LEB,
-        initramfs_factory_bytes=found['initramfs-factory.ubi'].stat().st_size,
+        factory_ubi_bytes=found['squashfs-factory.ubi'].stat().st_size,
         slot_bytes=SLOT_BYTES, device_boot_tested=False, flash_authorized_by_build=False,
     )
     (artifacts / 'stock-slot-report.json').write_text(json.dumps(sizes, indent=2))
     print(json.dumps(sizes, indent=2))
     if sizes['overlay_left_bytes'] < MIN_OVERLAY_BYTES:
         raise SystemExit('sysupgrade image leaves under 4 MiB of overlay in a stock slot')
-    if sizes['initramfs_factory_bytes'] > SLOT_BYTES:
-        raise SystemExit('initramfs-factory.ubi is larger than a stock slot')
+    if sizes['factory_ubi_bytes'] > SLOT_BYTES:
+        raise SystemExit('squashfs-factory.ubi is larger than a stock slot')
 
     fw = artifacts / 'firmware'
     fw.mkdir(exist_ok=True)

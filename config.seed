@@ -5,8 +5,11 @@
 CONFIG_TARGET_qualcommax=y
 CONFIG_TARGET_qualcommax_ipq807x=y
 CONFIG_TARGET_qualcommax_ipq807x_DEVICE_xiaomi_ax9000-stock=y
-# initramfs-factory.ubi is the first-stage image written to the inactive stock slot
-CONFIG_TARGET_ROOTFS_INITRAMFS=y
+# No initramfs. Its kernel unpacks to ~52 MB, but the stock RA70 U-Boot only
+# leaves 0x41000000-0x44000000 (48 MB): below is the NSS no-map region, at
+# 0x44000000 sits the FIT it is unpacking from. squashfs-factory.ubi (UBI vol
+# 0 kernel, 1 rootfs, 2 rootfs_data) goes into the inactive slot instead.
+# CONFIG_TARGET_ROOTFS_INITRAMFS is not set
 # CCACHE is a developer option
 CONFIG_DEVEL=y
 CONFIG_CCACHE=y

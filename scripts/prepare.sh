@@ -24,6 +24,7 @@ chmod +x source/files/etc/uci-defaults/* source/files/usr/sbin/ax9000-wifi-setup
 # Local fixes; each patch header explains why. git apply fails loudly when
 # upstream moves under them.
 for p in patches/target/*.patch; do
+	[ -e "$p" ] || continue  # the directory may hold no target patch at all
 	git -C source apply --verbose "$repo_dir/$p"
 done
 cp patches/mac80211/nss/ath11k/*.patch source/package/kernel/mac80211/patches/nss/ath11k/
