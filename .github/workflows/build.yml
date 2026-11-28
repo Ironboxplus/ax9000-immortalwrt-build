@@ -95,6 +95,41 @@ jobs:
             ax9000-viking-
       - name: Fetch source, configure feeds and verify the configuration
         run: bash scripts/prepare.sh
+      # Host tools and the cross toolchain took ~27 of the 57 compile minutes in
+      # run 46126596272 and ccache barely helps there: cmake bootstraps itself
+      # with HOSTCC_NOCACHE (ccache is built with cmake), gcc builds its runtime
+      # with the xgcc it just made. Cache the installed results instead, keyed
+      # on the source trees and config symbols they are built from.
+      - name: Key the host tools and toolchain cache
+        id: toolchain-key
+        working-directory: source
+        run: |
+          trees=$(git rev-parse HEAD:tools HEAD:toolchain HEAD:include HEAD:scripts HEAD:rules.mk HEAD:Makefile \
+            HEAD:target/linux/qualcommax/Makefile | sha256sum | cut -c1-16)
+          config=$(grep -E '^CONFIG_(TARGET_|ARCH|GCC|BINUTILS|LIBC|MUSL|EXTERNAL|TOOLCHAIN|GDB|USE_|SSP|PKG_|DEVEL|CCACHE|BUILD_|HOST)' .config \
+            | sort | sha256sum | cut -c1-16)
+          echo "key=ax9000-toolchain-$trees-$config" >> "$GITHUB_OUTPUT"
+      - name: Restore host tools and toolchain
+        id: toolchain-cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            source/staging_dir/host
+            source/staging_dir/toolchain-*
+          key: ${{ steps.toolchain-key.outputs.key }}
+      # make re-enters tools/ or toolchain/ when a file there is newer than the
+      # top stamp, and timestamp.pl counts an equal mtime as older. Every stamp
+      # gets time T and the two top stamps T+2 (toolchain's depends on
+      # .gcc_final_installed); build_dir is not cached, so re-entering would
+      # rebuild everything.
+      - name: Mark the restored host tools and toolchain newer than the checkout
+        if: steps.toolchain-cache.outputs.cache-hit == 'true'
+        working-directory: source
+        run: |
+          t=$(date +%s)
+          find staging_dir/host/stamp staging_dir/toolchain-*/stamp -type f -exec touch -d "@$t" {} +
+          touch -d "@$((t + 2))" staging_dir/host/stamp/.tools_compile_* staging_dir/toolchain-*/stamp/.toolchain_compile
+          ls -la --time-style=+%T staging_dir/host/stamp/.tools_compile_* staging_dir/toolchain-*/stamp/
       - name: Download source archives
         working-directory: source
         run: |
@@ -115,6 +150,14 @@ jobs:
             source/dl
             source/.ccache
           key: ax9000-viking-${{ github.run_id }}
+      - name: Save host tools and toolchain
+        if: steps.compile.outcome == 'success' && steps.toolchain-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            source/staging_dir/host
+            source/staging_dir/toolchain-*
+          key: ${{ steps.toolchain-key.outputs.key }}
       - name: Size of each package in the rootfs
         if: always() && steps.compile.outcome == 'success'
         run: python3 scripts/sizes.py "$GITHUB_WORKSPACE"
